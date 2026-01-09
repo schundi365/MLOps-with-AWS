@@ -159,3 +159,8 @@ analysis_log.txt
 # Data cache
 *.pkl
 *.pickle
+
+# Command history and development logs
+command_history.txt
+development_log.txt
+session_log.txt
