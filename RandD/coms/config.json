@@ -4,18 +4,18 @@
       "yahoo_symbol": "GC=F",
       "name": "Gold",
       "tradingview": {
-        "symbol": "XAUUSD",
-        "screener": "forex",
-        "exchange": "FX_IDC"
+        "symbol": "GOLD",
+        "screener": "cfd",
+        "exchange": "TVC"
       }
     },
     "XAGUSD": {
       "yahoo_symbol": "SI=F", 
       "name": "Silver",
       "tradingview": {
-        "symbol": "XAGUSD",
-        "screener": "forex", 
-        "exchange": "FX_IDC"
+        "symbol": "SILVER",
+        "screener": "cfd", 
+        "exchange": "TVC"
       }
     }
   },
@@ -42,7 +42,11 @@
     },
     "tradingview": {
       "enabled": true,
-      "intervals": ["1d", "4h", "1h"]
+      "intervals": ["1d", "4h", "1h"],
+      "working_configs": {
+        "XAUUSD": {"symbol": "GOLD", "screener": "cfd", "exchange": "TVC"},
+        "XAGUSD": {"symbol": "SILVER", "screener": "cfd", "exchange": "TVC"}
+      }
     }
   },
   "sentiment_thresholds": {

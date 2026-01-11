@@ -164,3 +164,4 @@ analysis_log.txt
 command_history.txt
 development_log.txt
 session_log.txt
+test_tradingview.py

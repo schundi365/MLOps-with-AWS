@@ -90,33 +90,51 @@ class MarketSentimentAgent:
         }
     
     def get_tradingview_analysis(self, symbol: str) -> Optional[Dict]:
-        """Get TradingView technical analysis"""
+        """Get TradingView technical analysis with multiple fallback options"""
         if not TRADINGVIEW_AVAILABLE:
             return None
             
-        try:
-            # Map symbols to TradingView format
-            tv_symbols = {
-                'XAUUSD': {'symbol': 'XAUUSD', 'screener': 'forex', 'exchange': 'FX_IDC'},
-                'XAGUSD': {'symbol': 'XAGUSD', 'screener': 'forex', 'exchange': 'FX_IDC'}
-            }
-            
-            if symbol not in tv_symbols:
-                return None
-                
-            handler = TA_Handler(
-                symbol=tv_symbols[symbol]['symbol'],
-                screener=tv_symbols[symbol]['screener'],
-                exchange=tv_symbols[symbol]['exchange'],
-                interval=Interval.INTERVAL_1_DAY
-            )
-            
-            analysis = handler.get_analysis()
-            return analysis.summary
-            
-        except Exception as e:
-            print(f"Error getting TradingView analysis for {symbol}: {e}")
+        # Multiple symbol configurations to try (ordered by reliability)
+        tv_symbol_configs = {
+            'XAUUSD': [
+                {'symbol': 'GOLD', 'screener': 'cfd', 'exchange': 'TVC'},
+                {'symbol': 'GC1!', 'screener': 'futures', 'exchange': 'COMEX'},
+                {'symbol': 'XAUUSD', 'screener': 'forex', 'exchange': 'FX_IDC'},
+                {'symbol': 'XAUUSD', 'screener': 'forex', 'exchange': 'OANDA'},
+                {'symbol': 'XAUUSD', 'screener': 'forex', 'exchange': 'FX'}
+            ],
+            'XAGUSD': [
+                {'symbol': 'SILVER', 'screener': 'cfd', 'exchange': 'TVC'},
+                {'symbol': 'SI1!', 'screener': 'futures', 'exchange': 'COMEX'},
+                {'symbol': 'XAGUSD', 'screener': 'forex', 'exchange': 'FX_IDC'},
+                {'symbol': 'XAGUSD', 'screener': 'forex', 'exchange': 'OANDA'},
+                {'symbol': 'XAGUSD', 'screener': 'forex', 'exchange': 'FX'}
+            ]
+        }
+        
+        if symbol not in tv_symbol_configs:
             return None
+        
+        # Try each configuration until one works
+        for config in tv_symbol_configs[symbol]:
+            try:
+                handler = TA_Handler(
+                    symbol=config['symbol'],
+                    screener=config['screener'],
+                    exchange=config['exchange'],
+                    interval=Interval.INTERVAL_1_DAY
+                )
+                
+                analysis = handler.get_analysis()
+                print(f"✅ TradingView analysis successful for {symbol} using {config['symbol']} on {config['exchange']}")
+                return analysis.summary
+                
+            except Exception as e:
+                print(f"⚠️  TradingView config failed for {symbol} ({config['symbol']} on {config['exchange']}): {e}")
+                continue
+        
+        print(f"❌ All TradingView configurations failed for {symbol}")
+        return None
     
     def analyze_sentiment_indicators(self, data: pd.DataFrame) -> Dict:
         """Analyze various sentiment indicators"""
