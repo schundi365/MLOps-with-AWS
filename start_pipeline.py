@@ -33,15 +33,24 @@ def start_pipeline(region: str = 'us-east-1') -> bool:
     state_machine_arn = f"arn:aws:states:{region}:{account_id}:stateMachine:MovieLensMLPipeline"
     
     try:
-        # Generate unique execution name
+        # Generate unique execution name and job names
         from datetime import datetime
-        execution_name = f"execution-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        execution_name = f"execution-{timestamp}"
+        
+        # Prepare input with required parameters
+        pipeline_input = {
+            "preprocessing_job_name": f"movielens-preprocessing-{timestamp}",
+            "training_job_name": f"movielens-training-{timestamp}",
+            "endpoint_name": f"movielens-endpoint-{timestamp}",
+            "endpoint_config_name": f"movielens-endpoint-config-{timestamp}"
+        }
         
         # Start execution
         response = sfn.start_execution(
             stateMachineArn=state_machine_arn,
             name=execution_name,
-            input=json.dumps({})  # Empty input
+            input=json.dumps(pipeline_input)
         )
         
         execution_arn = response['executionArn']
