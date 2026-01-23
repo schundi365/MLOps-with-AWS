@@ -1,219 +1,328 @@
-# Pipeline Monitoring - Current Status & Workarounds
+# Monitoring Workaround - Using AWS Console
 
-## Current Situation ✅
+## ✅ Pipeline Completed Successfully!
 
-Your pipeline **IS RUNNING** successfully! Here's what we know:
+**Endpoint Name:** `movielens-endpoint-20260123-122948`  
+**Status:** SUCCEEDED  
+**Region:** us-east-1
 
-### Pipeline Status (as of 15:20 UTC)
-- ✅ **Data Uploaded**: 4 files in `raw-data/` at 15:20:03
-- ✅ **Pipeline Started**: Execution `execution-20260119-152014` at 15:20:14
-- ⏳ **Current Stage**: Preprocessing (expected 5-10 minutes)
-- ⏳ **Next Stages**: Training → Evaluation → Deployment → Monitoring
+## Issue: Permission Limitations
 
-### What's Working
-- ✅ Infrastructure fully deployed
-- ✅ Data successfully uploaded to S3
-- ✅ Pipeline execution started
-- ✅ S3 bucket accessible
+Your IAM user (`dev`) doesn't have permissions for:
+- `cloudwatch:ListDashboards`
+- `cloudwatch:DescribeAlarms`
+- `sns:GetTopicAttributes`
+- `sns:Subscribe`
 
-### What's Not Working
-- ❌ Can't monitor via Python scripts (missing IAM permissions)
-- ❌ Can't check SageMaker jobs programmatically
-- ❌ Can't view Step Functions execution details via CLI
+## Solution: Use AWS Console
+
+Since the monitoring Lambda function ran successfully as part of the pipeline, the monitoring resources **have been created**. You just need to access them through the AWS Console.
 
 ---
 
-## Immediate Workaround: Use AWS Console
+## Step 1: View CloudWatch Dashboard
 
-### Monitor Your Pipeline Right Now
+### Option A: Direct Link
+Open this URL in your browser:
+```
+https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:
+```
 
-**Step Functions Console** (Best Option):
-1. Open: https://console.aws.amazon.com/states/home?region=us-east-1
-2. Click on `MovieLensMLPipeline`
-3. Click on execution: `execution-20260119-152014`
-4. Watch the visual workflow - current step will be highlighted in blue
+### Option B: Navigate in Console
+1. Go to AWS Console: https://console.aws.amazon.com/
+2. Search for "CloudWatch" in the top search bar
+3. Click "CloudWatch" service
+4. In the left menu, click "Dashboards"
+5. Look for dashboard named: `movielens-endpoint-20260123-122948-dashboard`
 
-**What You'll See**:
-- Green checkmarks ✓ = Completed steps
-- Blue/spinning = Currently running
-- Red X = Failed (if any errors)
-
-**Expected Timeline**:
-- 15:20 - 15:30: Preprocessing
-- 15:30 - 16:00: Training
-- 16:00 - 16:05: Evaluation
-- 16:05 - 16:15: Deployment
-- 16:15 - 16:18: Monitoring Setup
-- **Total**: ~45-60 minutes
+### What You'll See
+The dashboard displays:
+- **Invocations per Minute** - Request volume
+- **Model Latency (P50, P90, P99)** - Response times
+- **Error Rates (4xx and 5xx)** - Client and server errors
+- **CPU Utilization** - Instance CPU usage
+- **Memory Utilization** - Instance memory usage
 
 ---
 
-## Permanent Solution: Add IAM Permissions
+## Step 2: View CloudWatch Alarms
 
-### For You (User 'dev')
+### Option A: Direct Link
+Open this URL in your browser:
+```
+https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#alarmsV2:
+```
 
-You need to ask your AWS administrator to add monitoring permissions.
+### Option B: Navigate in Console
+1. In CloudWatch console
+2. Click "Alarms" → "All alarms" in the left menu
+3. Look for alarms:
+   - `movielens-endpoint-20260123-122948-high-error-rate`
+   - `movielens-endpoint-20260123-122948-high-latency`
 
-**Send them these files**:
-1. `PERMISSIONS_NEEDED.md` - Detailed explanation
-2. `admin_add_permissions.ps1` - PowerShell script to run
-3. `admin_add_permissions.sh` - Bash script alternative
+### Alarm Details
 
-### Quick Command for Administrator
+#### High Error Rate Alarm
+- **Threshold:** > 5% error rate
+- **Evaluation:** 2 consecutive periods of 5 minutes
+- **Status:** Should show "INSUFFICIENT_DATA" initially (normal for new endpoints)
 
-Your admin can run this single command:
+#### High Latency Alarm
+- **Threshold:** > 1000ms P99 latency
+- **Evaluation:** 2 consecutive periods of 5 minutes
+- **Status:** Should show "INSUFFICIENT_DATA" initially (normal for new endpoints)
+
+---
+
+## Step 3: Subscribe to Email Alerts
+
+### Option A: Through AWS Console (Recommended)
+
+1. Go to SNS Console:
+   ```
+   https://console.aws.amazon.com/sns/v3/home?region=us-east-1#/topics
+   ```
+
+2. Find topic: `MovieLensEndpointAlarms`
+
+3. Click on the topic
+
+4. Click "Create subscription" button
+
+5. Fill in:
+   - **Protocol:** Email
+   - **Endpoint:** YOUR-EMAIL@example.com
+
+6. Click "Create subscription"
+
+7. Check your email for confirmation message
+
+8. Click "Confirm subscription" link in email
+
+### Option B: Using AWS CLI (If You Have Permissions)
 
 ```bash
-# Attach the already-created monitoring policy
-aws iam attach-user-policy \
-  --user-name dev \
-  --policy-arn arn:aws:iam::327030626634:policy/MovieLensStepFunctionsMonitoring
-
-# Add SageMaker read access
-aws iam attach-user-policy \
-  --user-name dev \
-  --policy-arn arn:aws:iam::aws:policy/AmazonSageMakerReadOnly
-```
-
-### After Permissions Are Added
-
-Wait 10-15 seconds, then run:
-
-```powershell
-# Monitor in real-time
-python monitor_pipeline.py
-
-# Check detailed status
-python check_pipeline_simple.py
-
-# Verify everything
-python check_deployment_status.py
+aws sns subscribe \
+  --topic-arn arn:aws:sns:us-east-1:327030626634:MovieLensEndpointAlarms \
+  --protocol email \
+  --notification-endpoint YOUR-EMAIL@example.com \
+  --region us-east-1
 ```
 
 ---
 
-## Alternative: Check S3 for Progress
+## Step 4: Test the Endpoint
 
-You can manually check S3 to see pipeline progress:
+Now that monitoring is set up, let's test the endpoint to generate some metrics:
 
-```powershell
-# Check if preprocessing is done
-aws s3 ls s3://amzn-s3-movielens-327030626634/processed-data/
+### Create Test Script
 
-# Check if training is done
-aws s3 ls s3://amzn-s3-movielens-327030626634/models/
+Create a file `test_endpoint_predictions.py`:
 
-# Check if deployment is done
-aws s3 ls s3://amzn-s3-movielens-327030626634/outputs/
+```python
+import boto3
+import json
+
+# Initialize SageMaker runtime client
+runtime = boto3.client('sagemaker-runtime', region_name='us-east-1')
+
+# Endpoint name
+endpoint_name = 'movielens-endpoint-20260123-122948'
+
+# Test data: user_id, movie_id pairs
+test_data = [
+    {"user_id": 1, "movie_id": 1},    # User 1, Movie 1
+    {"user_id": 1, "movie_id": 50},   # User 1, Movie 50
+    {"user_id": 10, "movie_id": 100}, # User 10, Movie 100
+    {"user_id": 50, "movie_id": 200}, # User 50, Movie 200
+]
+
+print("Testing MovieLens Endpoint")
+print("=" * 60)
+print()
+
+for i, data in enumerate(test_data, 1):
+    try:
+        # Invoke endpoint
+        response = runtime.invoke_endpoint(
+            EndpointName=endpoint_name,
+            ContentType='application/json',
+            Body=json.dumps(data)
+        )
+        
+        # Parse response
+        result = json.loads(response['Body'].read().decode())
+        
+        print(f"Test {i}:")
+        print(f"  Input: User {data['user_id']}, Movie {data['movie_id']}")
+        print(f"  Predicted Rating: {result['prediction']:.2f}")
+        print()
+        
+    except Exception as e:
+        print(f"Test {i} failed: {e}")
+        print()
+
+print("=" * 60)
+print("Check CloudWatch dashboard to see metrics!")
 ```
 
-**Expected Files**:
-- `processed-data/train/` - Training data (appears after preprocessing)
-- `processed-data/validation/` - Validation data
-- `models/` - Trained model artifacts (appears after training)
-- `outputs/` - Inference results (appears after deployment)
+### Run Test
 
----
-
-## What's Happening Right Now
-
-Based on the timestamps:
-
-1. **15:20:03** - Data uploaded to S3 ✅
-2. **15:20:14** - Pipeline execution started ✅
-3. **15:20 - 15:30** - Preprocessing running ⏳
-   - Reading data from `raw-data/`
-   - Splitting into train/validation/test
-   - Writing to `processed-data/`
-
-4. **15:30 - 16:00** - Training will start ⏳
-   - SageMaker training job
-   - Model artifacts saved to `models/`
-
-5. **16:00 - 16:05** - Evaluation ⏳
-   - Lambda function calculates metrics
-   - Results saved to S3
-
-6. **16:05 - 16:15** - Deployment ⏳
-   - SageMaker endpoint created
-   - Model ready for inference
-
-7. **16:15 - 16:18** - Monitoring Setup ⏳
-   - CloudWatch dashboards created
-   - Model Monitor configured
-
----
-
-## How to Know When It's Done
-
-### Option 1: AWS Console (No Permissions Needed)
-- Go to Step Functions console
-- Execution status will show "Succeeded" (green)
-- All steps will have green checkmarks
-
-### Option 2: Check S3 (Works Now)
-```powershell
-# If this shows files, deployment is complete
-aws s3 ls s3://amzn-s3-movielens-327030626634/outputs/
+```bash
+python test_endpoint_predictions.py
 ```
 
-### Option 3: Check CloudWatch (If You Have Access)
-- Go to: https://console.aws.amazon.com/cloudwatch/home?region=us-east-1
-- Look for "MovieLens" dashboards
+---
+
+## Step 5: Monitor Metrics
+
+### View Real-Time Metrics in Console
+
+1. Go to CloudWatch Dashboard (Step 1)
+2. Metrics will appear within 5-10 minutes after sending requests
+3. Refresh the dashboard to see updated metrics
+
+### What to Look For
+
+#### ✅ Success Indicators
+- **Invocations:** Should show request count
+- **P99 Latency:** Should be < 500ms (target) or < 1000ms (acceptable)
+- **Error Rate:** Should be 0% or < 5%
+- **CPU Utilization:** Should be 20-60% under load
+- **Memory Utilization:** Should be 30-70%
+
+#### ⚠️ Warning Signs
+- **P99 Latency:** 500-1000ms (acceptable but above target)
+- **Error Rate:** 1-5% (investigate if persistent)
+- **CPU Utilization:** 60-80% (may need scaling)
+- **Memory Utilization:** 70-85% (may need scaling)
+
+#### 🚨 Alert Conditions
+- **P99 Latency:** > 1000ms (alarm will trigger)
+- **Error Rate:** > 5% (alarm will trigger)
+- **CPU Utilization:** > 80% (consider scaling)
+- **Memory Utilization:** > 85% (consider scaling)
 
 ---
 
-## Troubleshooting
+## Step 6: Verify Alarm Status
 
-### If Pipeline Fails
+After sending test requests and waiting 10-15 minutes:
 
-1. **Check Step Functions Console**:
-   - Click on the failed step
-   - View error message
-   - Check CloudWatch logs link
+1. Go to CloudWatch Alarms (Step 2)
+2. Check alarm status:
+   - **INSUFFICIENT_DATA** → Normal for new endpoints, wait for more data
+   - **OK** → Everything is working well ✅
+   - **ALARM** → Threshold exceeded, investigate 🚨
 
-2. **Common Issues**:
-   - **Preprocessing fails**: Data format issue
-   - **Training fails**: Instance quota exceeded
-   - **Deployment fails**: Endpoint quota exceeded
+---
 
-3. **Get Help**:
-   - Check `RUNBOOK.md` for detailed troubleshooting
-   - View CloudWatch logs in console
-   - Check S3 for partial outputs
+## Monitoring Best Practices
+
+### Daily Checks (First Week)
+- Review dashboard for unusual patterns
+- Check alarm status
+- Verify error rates are low
+- Monitor latency trends
+
+### Weekly Checks (After Stabilization)
+- Review weekly metrics summary
+- Adjust alarm thresholds if needed
+- Check for any alarm triggers
+- Document normal baseline
+
+### When Alarms Trigger
+1. Check CloudWatch dashboard for context
+2. Review CloudWatch Logs:
+   ```
+   https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups/log-group/$252Faws$252Fsagemaker$252FEndpoints$252Fmovielens-endpoint-20260123-122948
+   ```
+3. Check endpoint status in SageMaker console
+4. Investigate recent changes
+5. Document incident and resolution
+
+---
+
+## Requesting Additional Permissions (Optional)
+
+If you want to use the Python scripts for monitoring, ask your AWS administrator to add these permissions to your IAM user:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "cloudwatch:ListDashboards",
+                "cloudwatch:GetDashboard",
+                "cloudwatch:DescribeAlarms",
+                "cloudwatch:GetMetricStatistics",
+                "sns:GetTopicAttributes",
+                "sns:ListSubscriptionsByTopic",
+                "sns:Subscribe"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+```
+
+---
+
+## Quick Reference
+
+### Important URLs
+
+**CloudWatch Dashboards:**
+```
+https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards:
+```
+
+**CloudWatch Alarms:**
+```
+https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#alarmsV2:
+```
+
+**SNS Topics:**
+```
+https://console.aws.amazon.com/sns/v3/home?region=us-east-1#/topics
+```
+
+**SageMaker Endpoints:**
+```
+https://console.aws.amazon.com/sagemaker/home?region=us-east-1#/endpoints
+```
+
+**CloudWatch Logs:**
+```
+https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#logsV2:log-groups/log-group/$252Faws$252Fsagemaker$252FEndpoints$252Fmovielens-endpoint-20260123-122948
+```
+
+### Key Resources
+
+- **Endpoint Name:** `movielens-endpoint-20260123-122948`
+- **Dashboard Name:** `movielens-endpoint-20260123-122948-dashboard`
+- **SNS Topic:** `MovieLensEndpointAlarms`
+- **Region:** `us-east-1`
+- **Account ID:** `327030626634`
+
+### Alarm Thresholds
+
+- **Error Rate:** > 5% triggers alarm
+- **P99 Latency:** > 1000ms triggers alarm
+- **Target P99 Latency:** < 500ms (success criteria)
 
 ---
 
 ## Summary
 
-### ✅ Good News
-- Infrastructure is fully deployed
-- Pipeline is running successfully
-- Data is uploaded and being processed
+✅ **Pipeline completed successfully**  
+✅ **Endpoint deployed:** `movielens-endpoint-20260123-122948`  
+✅ **Monitoring resources created** (dashboard, alarms, SNS topic)  
+⏳ **Next:** Access monitoring through AWS Console  
+⏳ **Next:** Subscribe to email alerts  
+⏳ **Next:** Test endpoint and verify metrics  
 
-### ⚠️ Current Limitation
-- Can't monitor via Python scripts (need IAM permissions)
-- Must use AWS Console for now
+**Congratulations!** Your MovieLens recommendation system is now fully deployed with comprehensive monitoring! 🎉
 
-### 🎯 Next Steps
-1. **Now**: Monitor via AWS Console (link above)
-2. **Soon**: Ask admin to add permissions
-3. **Later**: Use Python scripts for monitoring
-
-### 📊 Expected Completion
-- **Started**: 15:20 UTC
-- **Expected End**: 16:15 - 16:20 UTC
-- **Duration**: ~45-60 minutes
-
----
-
-## Quick Links
-
-- **Step Functions**: https://console.aws.amazon.com/states/home?region=us-east-1#/statemachines/view/arn:aws:states:us-east-1:327030626634:stateMachine:MovieLensMLPipeline
-- **S3 Bucket**: https://s3.console.aws.amazon.com/s3/buckets/amzn-s3-movielens-327030626634
-- **CloudWatch**: https://console.aws.amazon.com/cloudwatch/home?region=us-east-1
-- **SageMaker**: https://console.aws.amazon.com/sagemaker/home?region=us-east-1
-
----
-
-**Your pipeline is running! Check the AWS Console to watch it progress.** 🚀

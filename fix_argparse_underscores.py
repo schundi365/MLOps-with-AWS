@@ -1,16 +1,24 @@
+#!/usr/bin/env python3
 """
+Fix Issue #15: Argparse hyphen vs underscore mismatch.
+
+Problem: SageMaker passes hyperparameters with underscores (--batch_size)
+but argparse expects hyphens (--batch-size).
+
+Solution: Update training script to accept both formats.
+"""
+
+import boto3
+import tarfile
+import io
+
+def create_fixed_training_script():
+    """Create training script that accepts both hyphens and underscores."""
+    
+    script_content = '''"""
 SageMaker training script for collaborative filtering model.
-
-This script handles model training on SageMaker, including:
-- Argument parsing for hyperparameters
-- Data loading from SageMaker input channels
-- Training loop with MSE loss
-- Validation loop
-- RMSE logging for CloudWatch
-- Model checkpointing
-- Saving final model to SageMaker model directory
-
-Validates: Requirements 3.4, 3.5, 3.6
+Standalone version with model code embedded.
+Fixed to accept both hyphens and underscores in arguments.
 """
 
 import argparse
@@ -18,7 +26,6 @@ import json
 import logging
 import os
 import sys
-import shutil
 from pathlib import Path
 
 import numpy as np
@@ -28,10 +35,6 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 
-# Add src directory to path for imports
-sys.path.append(str(Path(__file__).parent))
-from model import CollaborativeFilteringModel
-
 
 # Configure logging
 logging.basicConfig(
@@ -40,6 +43,83 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# ============================================================================
+# MODEL DEFINITION (embedded)
+# ============================================================================
+
+class CollaborativeFilteringModel(nn.Module):
+    """
+    Collaborative filtering model using matrix factorization.
+    
+    The model learns embeddings for users and movies, along with bias terms,
+    to predict ratings through dot product computation.
+    """
+    
+    def __init__(self, num_users: int, num_movies: int, embedding_dim: int):
+        super(CollaborativeFilteringModel, self).__init__()
+        
+        # Validate inputs
+        if num_users <= 0:
+            raise ValueError(f"num_users must be positive, got {num_users}")
+        if num_movies <= 0:
+            raise ValueError(f"num_movies must be positive, got {num_movies}")
+        if embedding_dim <= 0:
+            raise ValueError(f"embedding_dim must be positive, got {embedding_dim}")
+        
+        self.num_users = num_users
+        self.num_movies = num_movies
+        self.embedding_dim = embedding_dim
+        
+        # User and movie embeddings
+        self.user_embedding = nn.Embedding(num_users, embedding_dim)
+        self.movie_embedding = nn.Embedding(num_movies, embedding_dim)
+        
+        # Bias terms
+        self.user_bias = nn.Embedding(num_users, 1)
+        self.movie_bias = nn.Embedding(num_movies, 1)
+        
+        # Initialize embeddings with small random values
+        self._init_weights()
+    
+    def _init_weights(self):
+        """Initialize embedding weights with small random values"""
+        nn.init.normal_(self.user_embedding.weight, mean=0.0, std=0.01)
+        nn.init.normal_(self.movie_embedding.weight, mean=0.0, std=0.01)
+        nn.init.zeros_(self.user_bias.weight)
+        nn.init.zeros_(self.movie_bias.weight)
+    
+    def forward(self, user_ids: torch.Tensor, movie_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass to compute predicted ratings.
+        
+        Args:
+            user_ids: Tensor of user IDs, shape (batch_size,)
+            movie_ids: Tensor of movie IDs, shape (batch_size,)
+        
+        Returns:
+            Predicted ratings, shape (batch_size,)
+        """
+        # Get embeddings
+        user_emb = self.user_embedding(user_ids)  # (batch_size, embedding_dim)
+        movie_emb = self.movie_embedding(movie_ids)  # (batch_size, embedding_dim)
+        
+        # Compute dot product
+        dot_product = (user_emb * movie_emb).sum(dim=1)  # (batch_size,)
+        
+        # Add bias terms
+        user_b = self.user_bias(user_ids).squeeze()  # (batch_size,)
+        movie_b = self.movie_bias(movie_ids).squeeze()  # (batch_size,)
+        
+        # Final prediction
+        prediction = dot_product + user_b + movie_b
+        
+        return prediction
+
+
+# ============================================================================
+# DATASET
+# ============================================================================
 
 class RatingsDataset(Dataset):
     """PyTorch Dataset for user-movie ratings."""
@@ -62,35 +142,34 @@ class RatingsDataset(Dataset):
         return self.user_ids[idx], self.movie_ids[idx], self.ratings[idx]
 
 
+# ============================================================================
+# TRAINING FUNCTIONS
+# ============================================================================
+
 def parse_args():
-    """
-    Parse command-line arguments for training hyperparameters.
-    
-    Returns:
-        Parsed arguments namespace
-    """
+    """Parse command-line arguments for training hyperparameters."""
     parser = argparse.ArgumentParser(description='Train collaborative filtering model')
     
-    # Hyperparameters
-    parser.add_argument('--embedding-dim', type=int, default=128,
+    # Hyperparameters - accept BOTH hyphens and underscores
+    parser.add_argument('--embedding-dim', '--embedding_dim', type=int, default=128, dest='embedding_dim',
                         help='Dimensionality of user and movie embeddings (default: 128)')
-    parser.add_argument('--learning-rate', type=float, default=0.001,
+    parser.add_argument('--learning-rate', '--learning_rate', type=float, default=0.001, dest='learning_rate',
                         help='Learning rate for Adam optimizer (default: 0.001)')
-    parser.add_argument('--batch-size', type=int, default=256,
+    parser.add_argument('--batch-size', '--batch_size', type=int, default=256, dest='batch_size',
                         help='Training batch size (default: 256)')
     parser.add_argument('--epochs', type=int, default=50,
                         help='Number of training epochs (default: 50)')
-    parser.add_argument('--num-factors', type=int, default=50,
+    parser.add_argument('--num-factors', '--num_factors', type=int, default=50, dest='num_factors',
                         help='Number of latent factors (alias for embedding-dim, default: 50)')
     
     # SageMaker-specific arguments
-    parser.add_argument('--model-dir', type=str, default=os.environ.get('SM_MODEL_DIR', './model'))
+    parser.add_argument('--model-dir', '--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', './model'), dest='model_dir')
     parser.add_argument('--train', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', './data/train'))
     parser.add_argument('--validation', type=str, default=os.environ.get('SM_CHANNEL_VALIDATION', './data/validation'))
-    parser.add_argument('--output-data-dir', type=str, default=os.environ.get('SM_OUTPUT_DATA_DIR', './output'))
+    parser.add_argument('--output-data-dir', '--output_data_dir', type=str, default=os.environ.get('SM_OUTPUT_DATA_DIR', './output'), dest='output_data_dir')
     
     # Device configuration
-    parser.add_argument('--num-gpus', type=int, default=torch.cuda.device_count())
+    parser.add_argument('--num-gpus', '--num_gpus', type=int, default=torch.cuda.device_count(), dest='num_gpus')
     
     args = parser.parse_args()
     
@@ -102,15 +181,7 @@ def parse_args():
 
 
 def load_data(data_dir: str) -> pd.DataFrame:
-    """
-    Load data from SageMaker input channel.
-    
-    Args:
-        data_dir: Directory containing CSV files
-    
-    Returns:
-        DataFrame with userId, movieId, and rating columns
-    """
+    """Load data from SageMaker input channel."""
     logger.info(f"Loading data from {data_dir}")
     
     # Find CSV files in the directory
@@ -136,38 +207,10 @@ def load_data(data_dir: str) -> pd.DataFrame:
     return data
 
 
-def calculate_rmse(predictions: torch.Tensor, targets: torch.Tensor) -> float:
-    """
-    Calculate Root Mean Square Error.
-    
-    Args:
-        predictions: Predicted ratings
-        targets: Actual ratings
-    
-    Returns:
-        RMSE value
-    """
-    mse = torch.mean((predictions - targets) ** 2)
-    rmse = torch.sqrt(mse)
-    return rmse.item()
-
-
 def train_epoch(model: nn.Module, train_loader: DataLoader, 
                 criterion: nn.Module, optimizer: optim.Optimizer,
                 device: torch.device) -> float:
-    """
-    Train model for one epoch.
-    
-    Args:
-        model: Collaborative filtering model
-        train_loader: DataLoader for training data
-        criterion: Loss function (MSE)
-        optimizer: Optimizer
-        device: Device to train on (CPU or GPU)
-    
-    Returns:
-        Average training RMSE for the epoch
-    """
+    """Train model for one epoch."""
     model.train()
     total_loss = 0.0
     total_samples = 0
@@ -206,18 +249,7 @@ def train_epoch(model: nn.Module, train_loader: DataLoader,
 
 def validate(model: nn.Module, val_loader: DataLoader,
              criterion: nn.Module, device: torch.device) -> float:
-    """
-    Validate model on validation set.
-    
-    Args:
-        model: Collaborative filtering model
-        val_loader: DataLoader for validation data
-        criterion: Loss function (MSE)
-        device: Device to validate on (CPU or GPU)
-    
-    Returns:
-        Validation RMSE
-    """
+    """Validate model on validation set."""
     model.eval()
     total_loss = 0.0
     total_samples = 0
@@ -248,16 +280,7 @@ def validate(model: nn.Module, val_loader: DataLoader,
 
 def save_checkpoint(model: nn.Module, optimizer: optim.Optimizer,
                    epoch: int, val_rmse: float, checkpoint_path: str):
-    """
-    Save model checkpoint.
-    
-    Args:
-        model: Model to save
-        optimizer: Optimizer state to save
-        epoch: Current epoch number
-        val_rmse: Validation RMSE at this checkpoint
-        checkpoint_path: Path to save checkpoint
-    """
+    """Save model checkpoint."""
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
@@ -270,17 +293,7 @@ def save_checkpoint(model: nn.Module, optimizer: optim.Optimizer,
 
 def save_model(model: nn.Module, model_dir: str, num_users: int,
                num_movies: int, embedding_dim: int, metadata: dict):
-    """
-    Save final model to SageMaker model directory.
-    
-    Args:
-        model: Trained model
-        model_dir: Directory to save model
-        num_users: Number of users in training data
-        num_movies: Number of movies in training data
-        embedding_dim: Embedding dimensionality
-        metadata: Additional metadata to save
-    """
+    """Save final model to SageMaker model directory."""
     # Create model directory if it doesn't exist
     os.makedirs(model_dir, exist_ok=True)
     
@@ -290,7 +303,6 @@ def save_model(model: nn.Module, model_dir: str, num_users: int,
     logger.info(f"Saved model to {model_path}")
     
     # Save metadata
-    # Convert numpy types to native Python types for JSON serialization
     metadata_dict = {
         'num_users': int(num_users),
         'num_movies': int(num_movies),
@@ -301,52 +313,10 @@ def save_model(model: nn.Module, model_dir: str, num_users: int,
     with open(metadata_path, 'w') as f:
         json.dump(metadata_dict, f, indent=2)
     logger.info(f"Saved metadata to {metadata_path}")
-    
-    # Copy inference code files for SageMaker endpoint
-    # These files are needed by the PyTorch inference container
-    code_dir = os.path.join(model_dir, 'code')
-    os.makedirs(code_dir, exist_ok=True)
-    
-    # Copy inference.py and model.py
-    # In SageMaker, source code is in /opt/ml/code/ or same directory as train.py
-    # Try multiple locations to find the files
-    possible_src_dirs = [
-        '/opt/ml/code',  # SageMaker default
-        os.path.dirname(os.path.abspath(__file__)),  # Same directory as train.py
-        os.getcwd(),  # Current working directory
-    ]
-    
-    files_to_copy = ['inference.py', 'model.py']
-    
-    for filename in files_to_copy:
-        copied = False
-        for src_dir in possible_src_dirs:
-            src_path = os.path.join(src_dir, filename)
-            if os.path.exists(src_path):
-                dst_path = os.path.join(code_dir, filename)
-                shutil.copy2(src_path, dst_path)
-                logger.info(f"Copied {filename} from {src_path} to {dst_path}")
-                copied = True
-                break
-        
-        if not copied:
-            logger.warning(f"{filename} not found in any of: {possible_src_dirs}")
-            # List what files ARE available for debugging
-            for src_dir in possible_src_dirs:
-                if os.path.exists(src_dir):
-                    files = os.listdir(src_dir)
-                    logger.info(f"Files in {src_dir}: {files}")
-    
-    logger.info("Model artifacts saved successfully with inference code")
 
 
 def train(args):
-    """
-    Main training function.
-    
-    Args:
-        args: Parsed command-line arguments
-    """
+    """Main training function."""
     logger.info("Starting training")
     logger.info(f"Arguments: {args}")
     
@@ -431,14 +401,14 @@ def train(args):
     
     # Save final model
     metadata = {
-        'training_rmse': train_rmse,
-        'validation_rmse': best_val_rmse,
-        'best_epoch': best_epoch,
+        'training_rmse': float(train_rmse),
+        'validation_rmse': float(best_val_rmse),
+        'best_epoch': int(best_epoch),
         'hyperparameters': {
-            'learning_rate': args.learning_rate,
-            'batch_size': args.batch_size,
-            'epochs': args.epochs,
-            'embedding_dim': args.embedding_dim
+            'learning_rate': float(args.learning_rate),
+            'batch_size': int(args.batch_size),
+            'epochs': int(args.epochs),
+            'embedding_dim': int(args.embedding_dim)
         }
     }
     
@@ -450,3 +420,69 @@ def train(args):
 if __name__ == '__main__':
     args = parse_args()
     train(args)
+'''
+    
+    return script_content
+
+
+def main():
+    """Main function to fix the argparse issue."""
+    
+    bucket_name = 'amzn-s3-movielens-327030626634'
+    region = 'us-east-1'
+    
+    print("\n" + "="*70)
+    print("FIXING ISSUE #15: Argparse Hyphen vs Underscore")
+    print("="*70)
+    print()
+    
+    # Create fixed training script
+    print("Creating fixed training script...")
+    train_script = create_fixed_training_script()
+    
+    # Create tarball in memory
+    print("Creating tarball...")
+    tarball_buffer = io.BytesIO()
+    with tarfile.open(fileobj=tarball_buffer, mode='w:gz') as tar:
+        # Add train.py
+        train_info = tarfile.TarInfo(name='train.py')
+        train_info.size = len(train_script.encode('utf-8'))
+        tar.addfile(train_info, io.BytesIO(train_script.encode('utf-8')))
+    
+    tarball_buffer.seek(0)
+    tarball_size = len(tarball_buffer.getvalue())
+    
+    print(f"Tarball size: {tarball_size:,} bytes")
+    
+    # Upload to S3
+    print(f"Uploading to s3://{bucket_name}/code/sourcedir.tar.gz...")
+    s3 = boto3.client('s3', region_name=region)
+    s3.put_object(
+        Bucket=bucket_name,
+        Key='code/sourcedir.tar.gz',
+        Body=tarball_buffer.getvalue()
+    )
+    
+    print("[OK] Tarball uploaded successfully")
+    print()
+    print("="*70)
+    print("FIX APPLIED")
+    print("="*70)
+    print()
+    print("Changes made:")
+    print("1. Updated argparse to accept BOTH hyphens and underscores")
+    print("2. --batch-size and --batch_size both work now")
+    print("3. --learning-rate and --learning_rate both work now")
+    print("4. --embedding-dim and --embedding_dim both work now")
+    print()
+    print("This fixes the mismatch between SageMaker's hyperparameter format")
+    print("(underscores) and argparse's expected format (hyphens).")
+    print()
+    print("Next step: Restart the pipeline")
+    print("  python start_pipeline.py --region us-east-1")
+    print()
+    print("="*70)
+
+
+if __name__ == "__main__":
+    main()

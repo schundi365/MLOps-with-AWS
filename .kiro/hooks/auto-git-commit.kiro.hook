@@ -1,0 +1,23 @@
+{
+  "enabled": true,
+  "name": "Auto Git Commit",
+  "description": "Automatically commits code changes to git repository when files are edited",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "*.py",
+      "*.md",
+      "*.sh",
+      "*.ps1",
+      "*.txt",
+      "*.json",
+      "*.yaml",
+      "*.yml"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Commit the recently edited file to git with a descriptive commit message that explains what was changed"
+  }
+}

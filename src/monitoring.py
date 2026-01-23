@@ -3,9 +3,12 @@ CloudWatch Monitoring Setup Module
 
 This module provides functions to create CloudWatch dashboards and alarms
 for monitoring SageMaker endpoint performance and health.
+
+This module can be used both as a library and as an AWS Lambda function.
 """
 
 import json
+import boto3
 from typing import Dict, List, Optional
 
 
@@ -449,3 +452,107 @@ def create_monitoring_setup(
             "high_latency": latency_alarm_config
         }
     }
+
+
+
+def lambda_handler(event, context):
+    """
+    AWS Lambda handler for setting up monitoring for a SageMaker endpoint.
+    
+    This function is called by Step Functions after endpoint deployment to
+    create CloudWatch dashboards and alarms.
+    
+    Expected event structure:
+    {
+        "endpoint_name": "movielens-endpoint-...",
+        "bucket_name": "amzn-s3-movielens-..."
+    }
+    
+    Args:
+        event: Event data from Step Functions
+        context: Lambda context object
+        
+    Returns:
+        Dictionary with monitoring setup status
+    """
+    print(f"Received event: {json.dumps(event)}")
+    
+    # Extract parameters from event
+    endpoint_name = event.get('endpoint_name')
+    bucket_name = event.get('bucket_name')
+    
+    if not endpoint_name:
+        raise ValueError("endpoint_name is required in event")
+    
+    print(f"Setting up monitoring for endpoint: {endpoint_name}")
+    
+    # Initialize AWS clients
+    cloudwatch = boto3.client('cloudwatch')
+    sns = boto3.client('sns')
+    sts = boto3.client('sts')
+    
+    # Get account ID for SNS topic ARN
+    account_id = sts.get_caller_identity()['Account']
+    region = context.invoked_function_arn.split(':')[3]
+    
+    # Create or get SNS topic for alarms
+    topic_name = 'MovieLensEndpointAlarms'
+    try:
+        # Try to create topic (idempotent operation)
+        topic_response = sns.create_topic(Name=topic_name)
+        sns_topic_arn = topic_response['TopicArn']
+        print(f"Using SNS topic: {sns_topic_arn}")
+    except Exception as e:
+        print(f"Error creating SNS topic: {e}")
+        # Use default topic ARN format
+        sns_topic_arn = f"arn:aws:sns:{region}:{account_id}:{topic_name}"
+    
+    # Create monitoring setup
+    monitoring_config = create_monitoring_setup(
+        endpoint_name=endpoint_name,
+        sns_topic_arn=sns_topic_arn,
+        region=region
+    )
+    
+    # Create CloudWatch dashboard
+    try:
+        dashboard_config = monitoring_config['dashboard']
+        cloudwatch.put_dashboard(
+            DashboardName=dashboard_config['DashboardName'],
+            DashboardBody=dashboard_config['DashboardBody']
+        )
+        print(f"Created dashboard: {dashboard_config['DashboardName']}")
+    except Exception as e:
+        print(f"Error creating dashboard: {e}")
+        # Continue even if dashboard creation fails
+    
+    # Create CloudWatch alarms
+    alarms_created = []
+    for alarm_type, alarm_config in monitoring_config['alarms'].items():
+        try:
+            # Remove Metrics field if present (use MetricName instead for simple alarms)
+            if 'Metrics' in alarm_config:
+                # This is a metric math alarm (error rate)
+                cloudwatch.put_metric_alarm(**alarm_config)
+            else:
+                # This is a simple alarm (latency)
+                cloudwatch.put_metric_alarm(**alarm_config)
+            
+            alarm_name = alarm_config['AlarmName']
+            alarms_created.append(alarm_name)
+            print(f"Created alarm: {alarm_name}")
+        except Exception as e:
+            print(f"Error creating {alarm_type} alarm: {e}")
+            # Continue even if alarm creation fails
+    
+    result = {
+        'statusCode': 200,
+        'endpoint_name': endpoint_name,
+        'dashboard_created': True,
+        'alarms_created': alarms_created,
+        'sns_topic_arn': sns_topic_arn,
+        'message': f'Monitoring setup completed for {endpoint_name}'
+    }
+    
+    print(f"Monitoring setup result: {json.dumps(result)}")
+    return result

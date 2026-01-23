@@ -135,10 +135,12 @@ class StepFunctionsDeployment:
                         },
                         "HyperParameters": {
                             "epochs": "50",
-                            "batch_size": "256",
-                            "learning_rate": "0.001",
-                            "embedding_dim": "128",
-                            "num_factors": "50"
+                            "batch-size": "256",           # Use hyphens to match argparse
+                            "learning-rate": "0.001",      # Use hyphens to match argparse
+                            "embedding-dim": "128",        # Use hyphens to match argparse
+                            "num-factors": "50",           # Use hyphens to match argparse
+                            "sagemaker_program": "train.py",
+                            "sagemaker_submit_directory": f"s3://{bucket_name}/code/sourcedir.tar.gz"
                         },
                         "InputDataConfig": [
                             {
