@@ -248,7 +248,12 @@ class CostlyResourceStopper:
                     self.total_estimated_savings += 50.00
         
         except Exception as e:
-            self.log(f"Error listing EC2 instances: {e}", "ERROR")
+            error_msg = str(e)
+            if 'UnauthorizedOperation' in error_msg or 'not authorized' in error_msg:
+                self.log(f"⚠️  Skipping EC2 instances - insufficient permissions", "WARNING")
+                self.log("   (If you don't have EC2 instances, this is OK)", "WARNING")
+            else:
+                self.log(f"Error listing EC2 instances: {e}", "ERROR")
     
     def stop_rds_instances(self) -> None:
         """Stop all RDS database instances"""
@@ -295,7 +300,12 @@ class CostlyResourceStopper:
                     self.log(f"RDS instance {db_id} not available (Status: {status})")
         
         except Exception as e:
-            self.log(f"Error listing RDS instances: {e}", "ERROR")
+            error_msg = str(e)
+            if 'AccessDenied' in error_msg or 'not authorized' in error_msg:
+                self.log(f"⚠️  Skipping RDS instances - insufficient permissions", "WARNING")
+                self.log("   (If you don't have RDS instances, this is OK)", "WARNING")
+            else:
+                self.log(f"Error listing RDS instances: {e}", "ERROR")
     
     def disable_eventbridge_rules(self) -> None:
         """Disable EventBridge rules (prevents scheduled retraining)"""
@@ -340,7 +350,12 @@ class CostlyResourceStopper:
                     self.log(f"Rule {rule_name} already disabled")
         
         except Exception as e:
-            self.log(f"Error listing EventBridge rules: {e}", "ERROR")
+            error_msg = str(e)
+            if 'AccessDeniedException' in error_msg or 'not authorized' in error_msg:
+                self.log(f"⚠️  Skipping EventBridge rules - insufficient permissions", "WARNING")
+                self.log("   (This is OK - EventBridge rules have minimal cost)", "WARNING")
+            else:
+                self.log(f"Error listing EventBridge rules: {e}", "ERROR")
     
     def print_summary(self) -> None:
         """Print summary of stopped resources"""
@@ -365,12 +380,18 @@ class CostlyResourceStopper:
         
         self.log(f"\n💰 ESTIMATED MONTHLY SAVINGS: ${self.total_estimated_savings:.2f}")
         
+        if self.total_estimated_savings == 0:
+            self.log("\n⚠️  Note: Some services were skipped due to insufficient permissions")
+            self.log("   The most important service (SageMaker) was checked")
+            self.log("   If you have no SageMaker endpoints, you're good!")
+        
         if self.dry_run:
             self.log("\n⚠️  This was a DRY RUN - no resources were actually stopped")
             self.log("Run without --dry-run to actually stop resources")
         else:
-            self.log("\n✓ All costly resources have been stopped")
-            self.log("Your AWS bill should decrease significantly")
+            self.log("\n✓ All accessible costly resources have been checked")
+            if self.total_estimated_savings > 0:
+                self.log("Your AWS bill should decrease significantly")
             self.log("\nTo restart resources, redeploy using:")
             self.log("  python src/infrastructure/deploy_all.py --bucket-name <bucket>")
     
