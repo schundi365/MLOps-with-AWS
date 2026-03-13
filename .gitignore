@@ -138,3 +138,13 @@ docs/_build/
 site/
 COMPLETE_COMMAND_HISTORY.md
 stopandstartscriptsforaws.txt
+
+# Utility/Cleanup Scripts (one-off scripts for maintenance)
+remove_*.py
+fix_*.py
+check_*.py
+restart_*.py
+redeploy_*.py
+list_*.py
+monitor_*.py
+verify_*.py
